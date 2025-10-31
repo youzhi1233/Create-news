@@ -9,7 +9,7 @@ on:
   #   branches: ['master']
 
 permissions:
-  contents: read
+  contents: write  # 需要改为 write 权限以便提交文件
 
 jobs:
   worker:
@@ -19,47 +19,28 @@ jobs:
       output: converted_ebooks
       publisher: bookfere.com
       author: Calibre News Delivery
-      relay: ${{ secrets.SMTP }}
-      port: ${{ secrets.PORT }}
-      encrypt: ${{ secrets.ENCRYPT }}
-      secret: ${{ secrets.SECRET }}
-      from: ${{ secrets.FROM }}
-      to: ${{ secrets.TO }}
+      # 移除邮件相关环境变量
       ext: ${{ secrets.FORMAT || 'epub' }}
       size: ${{ secrets.SIZE || 25 }}
     steps:
-      - name: Checking Variable
-        run: |
-          declare -A variables
-          declare -a absences
-          variables=(
-            'SMTP' "$relay" 'PORT' "$port" 'ENCRYPT' "$encrypt"
-            'SECRET' "$secret" 'FROM' "$from" 'TO' "$to")
-          for key in ${!variables[@]}; do
-            variable=${variables[$key]}
-            [ -n "$variable" ] || absences+=($key)
-          done
-          if [ ${#absences[@]} -gt 0 ]; then
-            variable_keys=$(echo ${absences[@]/%/,})
-            echo "Missing variable(s): ${variable_keys/%,/}"; exit 1
-          fi
       - name: Set up Python
-        if: ${{ success() }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          
       - name: Install Calibre
-        if: ${{ success() }}
         run: |
           sudo apt-get update
           sudo apt-get install libegl1 libopengl0 libxcb-cursor0
           url=https://download.calibre-ebook.com/linux-installer.sh
           sudo -v && wget -nv -O- $url | sudo sh /dev/stdin
-      - name: Retrieving Recipe
-        if: ${{ success() }}
+          
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # 添加 token 以便推送更改
+          
       - name: Checking Recipe
-        if: ${{ success() }}
         run: |
           declare -A recipe_paths
           add_recipe() {
@@ -94,10 +75,10 @@ jobs:
           if [ $count -eq 0 ]; then
             echo 'No recipe needs processing'; exit 1
           fi
+            
       - name: Converting Ebook
-        if: ${{ success() }}
         run: |
-          mkdir $output
+          mkdir -p $output
           convert_ebook() {
             ebook_name="${recipe_path%.*}"
             ebook_path="$ebook_name.${ext,,}"
@@ -109,7 +90,7 @@ jobs:
             if [ -f "$style" ]; then arguments+=" --extra-css=\"$style\""; fi
             echo $arguments | xargs ebook-convert "$recipe_path" "$ebook_path"
             title=$(ebook-meta "${ebook_path}" | grep '^Title *:' |
-              sed 's/^Title *: *\(.*\)/\1/')
+              sed 's/^Title *: *$$.*$$/\1/')
             new_ebook_path="${output}/${title}.${ext,,}"
             echo "Renaming \"$ebook_path\" > \"$new_ebook_path\""
             mv "$ebook_path" "$new_ebook_path"
@@ -123,24 +104,27 @@ jobs:
           if [ $count -eq 0 ]; then
             echo 'No ebook needs send'; exit 1
           fi
-      - name: Sending Ebook
+
+      # 删除邮件发送步骤，直接进入保存步骤
+      - name: Storing Ebook to Repository
         if: ${{ success() }}
         run: |
-          while read -d '' ebook_path; do
-            filename="$(basename "$ebook_path")"
-            title="${filename%.*}"
-            file_size=$(du -m "$ebook_path" | cut -f 1)
-            if [ $file_size -ge $size ]; then
-              echo "Size exceeds the limitation: $filename (${file_size}MB)"
-              continue
-            fi
-            echo "Sending: \"$filename\""
-            calibre-smtp -a "$ebook_path" -r "$relay" --port="$port" \
-              -e "${encrypt^^}" -u "$from" -p "$secret" -s "$title" \
-              "$from" "$to" "Deliver \"${title}\""
-          done < <(find "$output" -type f -name "*.${ext,,}" -print0)
-          echo "All jobs done"
-      - name: Storing Ebook
+          # 配置 Git 用户信息
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 添加生成的文件
+          git add $output/
+          
+          # 检查是否有更改需要提交
+          if git diff-index --quiet HEAD --; then
+            echo "No changes to commit"
+          else
+            git commit -m "📚 Add generated ebooks - $(date +%Y-%m-%d)"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
+          
+      - name: Upload Artifact (Backup)
         if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
