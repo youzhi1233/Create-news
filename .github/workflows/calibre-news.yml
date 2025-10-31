@@ -18,7 +18,6 @@ jobs:
       publisher: bookfere.com
       author: Calibre News Delivery
       ext: ${{ secrets.FORMAT || 'epub' }}
-      size: ${{ secrets.SIZE || 25 }}
     steps:
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,200 +36,91 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Checking Recipe
+      - name: Find Recipe Files
         run: |
-          echo "开始检查recipe文件..."
-          declare -A recipe_paths
-          add_recipe() {
-            local name="$(basename "$recipe_path")"
-            local key=$(echo "$name" | md5sum | cut -d ' ' -f 1)
-            recipe_paths[$key]="$recipe_path"
-          }
+          echo "查找recipe文件..."
+          # 查找所有recipe文件
+          find . -name "*.recipe" -type f > recipe_files.txt || echo "没有找到recipe文件"
+          cat recipe_files.txt
           
-          if [ -f 'recipe_list.txt' ]; then
-            echo "找到recipe_list.txt文件"
-            while IFS= read -r recipe_path || [ -n "$recipe_path" ]; do
-              if [ -z "$recipe_path" ]; then continue; fi
-              title="${recipe_path%.recipe}"
-              result="$(ebook-convert --list-recipes | grep "$title" || true)"
-              if [ -z "$result" ]; then
-                echo "警告: Recipe \"$recipe_path\" 不存在"; continue
-              fi
-              if [ "${recipe_path##*.}" != 'recipe' ]; then
-                recipe_path="$recipe_path".recipe
-              fi
-              add_recipe
-            done < recipe_list.txt
-          fi
-          
-          while IFS= read -r -d '' recipe_path; do
-            add_recipe
-          done < <(find . -maxdepth 1 -type f -name '*.recipe' -print0)
-          
-          for key in "${!recipe_paths[@]}"; do
-            recipe_path="${recipe_paths[$key]}"
-            echo "找到recipe: $recipe_path"
-            echo "$recipe_path" >> temp_recipe_list.txt
-          done
-          
-          count=${#recipe_paths[@]}
-          echo "Recipe总数: $count"
-          if [ $count -eq 0 ]; then
-            echo '没有找到需要处理的recipe'
-            # 创建空文件避免后续错误
-            touch temp_recipe_list.txt
-          fi
-            
-      - name: Converting Ebook
+      - name: Convert Ebooks
+        id: convert
         run: |
           echo "开始电子书转换..."
-          
-          # 确保输出目录存在
           mkdir -p $output
           
-          # 清空之前的输出
-          rm -f $output/*.${ext,,} 2>/dev/null || true
-          
-          # 检查是否有recipe需要处理
-          if [ ! -f "temp_recipe_list.txt" ] || [ ! -s "temp_recipe_list.txt" ]; then
-            echo "没有recipe需要转换"
-            # 创建空文件避免后续步骤错误
-            touch $output/.placeholder
+          # 检查是否有recipe文件
+          if [ ! -s recipe_files.txt ]; then
+            echo "没有找到recipe文件"
+            echo "count=0" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # 转换函数
-          convert_ebook() {
-            local recipe_path="$1"
-            local ebook_name=$(basename "${recipe_path%.*}")
-            local output_file="$output/${ebook_name}.${ext,,}"
-            
-            echo "转换: $recipe_path -> $output_file"
-            
-            # 构建参数
-            local args=()
-            args+=(--authors="$author")
-            args+=(--publisher="$publisher")
-            
-            # 添加封面（如果存在）
-            local cover="covers/${ebook_name}.png"
-            if [ -f "$cover" ]; then
-              args+=(--cover="$cover")
-              echo "使用封面: $cover"
-            fi
-            
-            # 添加样式（如果存在）
-            local style="styles/${ebook_name}.css"
-            if [ -f "$style" ]; then
-              args+=(--extra-css="$style")
-              echo "使用样式: $style"
-            fi
-            
-            # 执行转换
-            echo "开始转换..."
-            if ebook-convert "$recipe_path" "$output_file" "${args[@]}"; then
-              echo "✓ 转换成功: $ebook_name"
-              # 检查文件是否确实创建
-              if [ -f "$output_file" ]; then
-                echo "文件已创建: $(ls -la "$output_file")"
-                return 0
-              else
-                echo "✗ 文件未创建: $output_file"
-                return 1
-              fi
-            else
-              echo "✗ 转换失败: $ebook_name"
-              rm -f "$output_file" 2>/dev/null || true
-              return 1
-            fi
-          }
-          
-          # 处理每个recipe
           success_count=0
-          failure_count=0
           
-          echo "开始处理recipe列表..."
-          while IFS= read -r recipe_path || [ -n "$recipe_path" ]; do
-            if [ -z "$recipe_path" ]; then
-              echo "跳过空行"
-              continue
+          # 处理每个recipe文件
+          while IFS= read -r recipe_file; do
+            if [ -f "$recipe_file" ]; then
+              ebook_name=$(basename "$recipe_file" .recipe)
+              output_file="$output/${ebook_name}.${ext,,}"
+              
+              echo "转换: $recipe_file -> $output_file"
+              
+              # 构建转换参数
+              args=()
+              args+=(--authors="$author")
+              args+=(--publisher="$publisher")
+              
+              # 添加封面（如果存在）
+              cover="covers/${ebook_name}.png"
+              if [ -f "$cover" ]; then
+                args+=(--cover="$cover")
+              fi
+              
+              # 添加样式（如果存在）
+              style="styles/${ebook_name}.css"
+              if [ -f "$style" ]; then
+                args+=(--extra-css="$style")
+              fi
+              
+              # 执行转换
+              if ebook-convert "$recipe_file" "$output_file" "${args[@]}"; then
+                echo "✓ 转换成功: $ebook_name"
+                ((success_count++))
+              else
+                echo "✗ 转换失败: $ebook_name"
+                # 清理失败的文件
+                rm -f "$output_file" 2>/dev/null || true
+              fi
             fi
-            
-            if [ ! -f "$recipe_path" ]; then
-              echo "Recipe文件不存在: $recipe_path"
-              ((failure_count++))
-              continue
-            fi
-            
-            echo "处理recipe: $recipe_path"
-            if convert_ebook "$recipe_path"; then
-              ((success_count++))
-            else
-              ((failure_count++))
-            fi
-          done < "temp_recipe_list.txt"
+          done < recipe_files.txt
           
-          # 等待所有进程完成
-          wait
+          echo "转换完成，成功: $success_count"
+          echo "count=$success_count" >> $GITHUB_OUTPUT
           
-          # 统计实际生成的文件
-          actual_count=0
-          if [ -d "$output" ]; then
-            actual_count=$(find "$output" -maxdepth 1 -name "*.${ext,,}" -type f | wc -l)
-          fi
-          
-          echo "=== 转换总结 ==="
-          echo "成功: $success_count"
-          echo "失败: $failure_count"
-          echo "实际生成的文件数: $actual_count"
-          
-          # 列出所有生成的文件
-          if [ $actual_count -gt 0 ]; then
-            echo "生成的电子书:"
-            find "$output" -maxdepth 1 -name "*.${ext,,}" -type f -exec ls -la {} \;
-          else
-            echo "没有生成任何电子书"
-          fi
-          
-          # 关键修复：简化退出逻辑
-          if [ $actual_count -gt 0 ]; then
-            echo "转换完成，有 $actual_count 个文件生成"
-            # 正常退出
-          else
-            echo "没有生成任何电子书文件"
-            # 这也是正常情况，不是错误
-          fi
+          # 确保脚本以0退出
+          true
 
-      - name: Storing Ebook to Repository
-        if: always()  # 改为always，即使上一步失败也执行
+      - name: Store Ebooks to Repository
+        if: steps.convert.outputs.count != '0'
         run: |
-          echo "开始存储电子书到仓库..."
+          echo "存储电子书到仓库..."
           
-          # 检查是否有文件需要提交
-          if [ -d "$output" ] && [ -n "$(ls -A "$output" 2>/dev/null)" ]; then
-            echo "有文件需要提交"
-            
-            # 配置 Git 用户信息
-            git config --local user.email "action@github.com"
-            git config --local user.name "GitHub Action"
-            
-            # 添加生成的文件
-            git add $output/
-            
-            # 检查是否有更改需要提交
-            if git diff-index --quiet HEAD --; then
-              echo "没有更改需要提交"
-            else
-              git commit -m "📚 Add generated ebooks - $(date +%Y-%m-%d)"
-              git push origin HEAD:${GITHUB_REF_NAME}
-              echo "更改已提交"
-            fi
+          # 配置Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 添加并提交电子书文件
+          git add $output/
+          if git diff-index --quiet HEAD --; then
+            echo "没有更改需要提交"
           else
-            echo "没有文件需要提交"
+            git commit -m "📚 Add generated ebooks - $(date +%Y-%m-%d)"
+            git push origin HEAD:${GITHUB_REF_NAME}
+            echo "更改已提交"
           fi
           
-      - name: Upload Artifact (Backup)
-        if: always()  # 改为always，即使上一步失败也执行
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Calibre-News-Delivery
