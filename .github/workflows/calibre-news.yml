@@ -77,6 +77,7 @@ jobs:
             
       - name: Converting Ebook
         run: |
+          set -e  # 遇到错误立即退出
           mkdir -p $output
           echo "开始电子书转换..."
           
@@ -172,17 +173,13 @@ jobs:
             echo "没有生成任何电子书"
           fi
           
-          # 设置最终计数
-          echo "Ebook count: $actual_count"
-          
           # 关键修复：只要有成功的转换就继续，而不是失败
           if [ $success_count -eq 0 ]; then
             echo '所有电子书转换都失败了'
             exit 1
           else
             echo '电子书转换完成，继续后续步骤'
-            # 即使有部分失败，只要至少有一个成功就继续
-            exit 0
+            # 成功完成，不退出（让脚本自然结束）
           fi
 
       - name: Storing Ebook to Repository
@@ -192,15 +189,14 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # 添加生成的文件
-          git add $output/
-          
-          # 检查是否有更改需要提交
-          if git diff-index --quiet HEAD --; then
-            echo "No changes to commit"
-          else
+          # 检查是否有文件需要提交
+          if [ -n "$(git status --porcelain $output)" ]; then
+            git add $output/
             git commit -m "📚 Add generated ebooks - $(date +%Y-%m-%d)"
             git push origin HEAD:${GITHUB_REF_NAME}
+            echo "已提交更改"
+          else
+            echo "没有更改需要提交"
           fi
           
       - name: Upload Artifact (Backup)
