@@ -12,8 +12,8 @@ class MinifluxRecipe(BasicNewsRecipe):
     language = 'zh'
     
     # Miniflux API 配置
-    miniflux_url = 'https://your-miniflux-instance.com'  # 你的 Miniflux 地址
-    api_key = 'your-api-key-here'  # Miniflux API Key
+    miniflux_url = 'https://ttrss.meihang.uk:65500'  # 你的 Miniflux 地址
+    api_key = 'kpsLYoFE-c-ZpEyND_OnO7oBVx3MCKkWLxiTECOxvcg='  # Miniflux API Key
     
     max_articles_per_feed = 50
     oldest_article = 7  # 只获取7天内的文章
