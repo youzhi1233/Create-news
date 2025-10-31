@@ -5,8 +5,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 0 * * *'
-  # push:
-  #   branches: ['master']
 
 permissions:
   contents: write
@@ -72,7 +70,9 @@ jobs:
           count=${#recipe_paths[@]}
           echo "Recipe count: $count"
           if [ $count -eq 0 ]; then
-            echo 'No recipe needs processing'; exit 1
+            echo 'No recipe needs processing'
+            # 这里改为退出代码0，因为找不到recipe不是错误
+            exit 0
           fi
             
       - name: Converting Ebook
@@ -175,9 +175,14 @@ jobs:
           # 设置最终计数
           echo "Ebook count: $actual_count"
           
-          if [ $actual_count -eq 0 ]; then
-            echo 'No ebook needs send'
+          # 关键修复：只要有成功的转换就继续，而不是失败
+          if [ $success_count -eq 0 ]; then
+            echo '所有电子书转换都失败了'
             exit 1
+          else
+            echo '电子书转换完成，继续后续步骤'
+            # 即使有部分失败，只要至少有一个成功就继续
+            exit 0
           fi
 
       - name: Storing Ebook to Repository
