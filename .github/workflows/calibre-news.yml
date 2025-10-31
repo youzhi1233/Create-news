@@ -9,7 +9,7 @@ on:
   #   branches: ['master']
 
 permissions:
-  contents: write  # 需要改为 write 权限以便提交文件
+  contents: write
 
 jobs:
   worker:
@@ -19,7 +19,6 @@ jobs:
       output: converted_ebooks
       publisher: bookfere.com
       author: Calibre News Delivery
-      # 移除邮件相关环境变量
       ext: ${{ secrets.FORMAT || 'epub' }}
       size: ${{ secrets.SIZE || 25 }}
     steps:
@@ -38,7 +37,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # 添加 token 以便推送更改
+          token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Checking Recipe
         run: |
@@ -79,33 +78,108 @@ jobs:
       - name: Converting Ebook
         run: |
           mkdir -p $output
+          echo "开始电子书转换..."
+          
+          # 清空之前的输出
+          rm -f $output/*.${ext,,} 2>/dev/null || true
+          
+          # 简化的转换函数
           convert_ebook() {
-            ebook_name="${recipe_path%.*}"
-            ebook_path="$ebook_name.${ext,,}"
-            echo "Converting \"$recipe_path\" > \"$ebook_path\"..."
-            arguments="--authors=\"$author\" --publisher=\"$publisher\""
-            cover="covers/${ebook_name}.png"
-            if [ -f "$cover" ]; then arguments+=" --cover=\"$cover\""; fi
-            style="styles/${ebook_name}.css"
-            if [ -f "$style" ]; then arguments+=" --extra-css=\"$style\""; fi
-            echo $arguments | xargs ebook-convert "$recipe_path" "$ebook_path"
-            title=$(ebook-meta "${ebook_path}" | grep '^Title *:' |
-              sed 's/^Title *: *$$.*$$/\1/')
-            new_ebook_path="${output}/${title}.${ext,,}"
-            echo "Renaming \"$ebook_path\" > \"$new_ebook_path\""
-            mv "$ebook_path" "$new_ebook_path"
+            local recipe_path="$1"
+            local ebook_name=$(basename "${recipe_path%.*}")
+            local output_file="$output/${ebook_name}.${ext,,}"
+            
+            echo "转换: $recipe_path -> $output_file"
+            
+            # 构建参数数组
+            local args=()
+            args+=(--authors="$author")
+            args+=(--publisher="$publisher")
+            
+            # 添加封面（如果存在）
+            local cover="covers/${ebook_name}.png"
+            if [ -f "$cover" ]; then
+              args+=(--cover="$cover")
+            fi
+            
+            # 添加样式（如果存在）
+            local style="styles/${ebook_name}.css"
+            if [ -f "$style" ]; then
+              args+=(--extra-css="$style")
+            fi
+            
+            # 执行转换
+            if ebook-convert "$recipe_path" "$output_file" "${args[@]}"; then
+              echo "✓ 转换成功: $ebook_name"
+              return 0
+            else
+              echo "✗ 转换失败: $ebook_name"
+              # 清理失败的文件
+              rm -f "$output_file" 2>/dev/null || true
+              return 1
+            fi
           }
-          while read recipe_path || [ -n "$recipe_path" ]; do
-            convert_ebook &
-          done < temp_recipe_list.txt
-          wait
-          count=$(find "$output" -type f -name "*.${ext,,}" | wc -l)
-          echo "Ebook count: $count"
-          if [ $count -eq 0 ]; then
-            echo 'No ebook needs send'; exit 1
+          
+          # 处理每个recipe
+          success_count=0
+          failure_count=0
+          
+          if [ -f "temp_recipe_list.txt" ]; then
+            while IFS= read -r recipe_path || [ -n "$recipe_path" ]; do
+              if [ -n "$recipe_path" ] && [ -f "$recipe_path" ]; then
+                if convert_ebook "$recipe_path"; then
+                  ((success_count++))
+                else
+                  ((failure_count++))
+                fi
+              else
+                echo "Recipe文件不存在: $recipe_path"
+                ((failure_count++))
+              fi
+            done < "temp_recipe_list.txt"
+          else
+            echo "错误: 找不到temp_recipe_list.txt文件"
+            # 尝试处理当前目录下的所有recipe文件
+            for recipe in *.recipe; do
+              if [ -f "$recipe" ]; then
+                if convert_ebook "$recipe"; then
+                  ((success_count++))
+                else
+                  ((failure_count++))
+                fi
+              fi
+            done
+          fi
+          
+          # 统计实际生成的文件
+          actual_count=0
+          if [ -d "$output" ]; then
+            actual_count=$(find "$output" -maxdepth 1 -name "*.${ext,,}" -type f | wc -l)
+          fi
+          
+          echo "=== 转换总结 ==="
+          echo "成功: $success_count"
+          echo "失败: $failure_count"
+          echo "实际生成的文件数: $actual_count"
+          
+          # 列出所有生成的文件
+          if [ $actual_count -gt 0 ]; then
+            echo "生成的电子书:"
+            find "$output" -maxdepth 1 -name "*.${ext,,}" -type f | while read f; do
+              echo "  - $(basename "$f") ($(du -h "$f" | cut -f1))"
+            done
+          else
+            echo "没有生成任何电子书"
+          fi
+          
+          # 设置最终计数
+          echo "Ebook count: $actual_count"
+          
+          if [ $actual_count -eq 0 ]; then
+            echo 'No ebook needs send'
+            exit 1
           fi
 
-      # 删除邮件发送步骤，直接进入保存步骤
       - name: Storing Ebook to Repository
         if: ${{ success() }}
         run: |
