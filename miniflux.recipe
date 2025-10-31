@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+# vim:fileencoding=utf-8
+
+from calibre.web.feeds.news import BasicNewsRecipe
+from calibre import browser
+import json
+from datetime import datetime
+
+class MinifluxRecipe(BasicNewsRecipe):
+    title = 'Miniflux 阅读列表'
+    description = '从 Miniflux RSS 阅读器生成电子书'
+    language = 'zh'
+    
+    # Miniflux API 配置
+    miniflux_url = 'https://your-miniflux-instance.com'  # 你的 Miniflux 地址
+    api_key = 'your-api-key-here'  # Miniflux API Key
+    
+    max_articles_per_feed = 50
+    oldest_article = 7  # 只获取7天内的文章
+    no_stylesheets = True
+    remove_javascript = True
+    
+    def parse_index(self):
+        # 使用 Miniflux API 获取文章
+        br = browser()
+        headers = {
+            'X-Auth-Token': self.api_key,
+            'Content-Type': 'application/json'
+        }
+        
+        # 获取未读文章
+        api_url = f'{self.miniflux_url}/v1/entries?status=unread&limit=100'
+        
+        try:
+            response = br.open(api_url, headers=headers).read()
+            data = json.loads(response)
+            
+            articles = []
+            for entry in data.get('entries', []):
+                article = {
+                    'title': entry['title'],
+                    'url': entry['url'],
+                    'date': entry['published_at'],
+                    'description': entry.get('content', ''),
+                    'content': entry.get('content', '')
+                }
+                articles.append(article)
+            
+            # 按分类组织文章
+            feeds = [('Miniflux 未读文章', articles)]
+            return feeds
+            
+        except Exception as e:
+            self.log.warning(f'获取 Miniflux 文章失败: {e}')
+            return []
