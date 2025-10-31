@@ -1,128 +1,17 @@
-name: Calibre News Delivery
-run-name: 'Calibre News Delivery: ${{ github.ref_name }}'
-
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
-
-permissions:
-  contents: write
+# 简化的工作流文件
+name: Simple Test
+on: [workflow_dispatch]
 
 jobs:
-  worker:
+  test:
     runs-on: ubuntu-latest
-    environment: calibre-news
-    env:
-      output: converted_ebooks
-      publisher: bookfere.com
-      author: Calibre News Delivery
-      ext: ${{ secrets.FORMAT || 'epub' }}
     steps:
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          
-      - name: Install Calibre
+      - uses: actions/checkout@v4
+      - name: Setup Calibre
+        run: sudo apt-get install -y calibre
+      - name: Test Conversion
         run: |
-          sudo apt-get update
-          sudo apt-get install libegl1 libopengl0 libxcb-cursor0
-          url=https://download.calibre-ebook.com/linux-installer.sh
-          sudo -v && wget -nv -O- $url | sudo sh /dev/stdin
-          
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Find Recipe Files
-        run: |
-          echo "查找recipe文件..."
-          # 查找所有recipe文件
-          find . -name "*.recipe" -type f > recipe_files.txt || echo "没有找到recipe文件"
-          cat recipe_files.txt
-          
-      - name: Convert Ebooks
-        id: convert
-        run: |
-          echo "开始电子书转换..."
-          mkdir -p $output
-          
-          # 检查是否有recipe文件
-          if [ ! -s recipe_files.txt ]; then
-            echo "没有找到recipe文件"
-            echo "count=0" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
-          success_count=0
-          
-          # 处理每个recipe文件
-          while IFS= read -r recipe_file; do
-            if [ -f "$recipe_file" ]; then
-              ebook_name=$(basename "$recipe_file" .recipe)
-              output_file="$output/${ebook_name}.${ext,,}"
-              
-              echo "转换: $recipe_file -> $output_file"
-              
-              # 构建转换参数
-              args=()
-              args+=(--authors="$author")
-              args+=(--publisher="$publisher")
-              
-              # 添加封面（如果存在）
-              cover="covers/${ebook_name}.png"
-              if [ -f "$cover" ]; then
-                args+=(--cover="$cover")
-              fi
-              
-              # 添加样式（如果存在）
-              style="styles/${ebook_name}.css"
-              if [ -f "$style" ]; then
-                args+=(--extra-css="$style")
-              fi
-              
-              # 执行转换
-              if ebook-convert "$recipe_file" "$output_file" "${args[@]}"; then
-                echo "✓ 转换成功: $ebook_name"
-                ((success_count++))
-              else
-                echo "✗ 转换失败: $ebook_name"
-                # 清理失败的文件
-                rm -f "$output_file" 2>/dev/null || true
-              fi
-            fi
-          done < recipe_files.txt
-          
-          echo "转换完成，成功: $success_count"
-          echo "count=$success_count" >> $GITHUB_OUTPUT
-          
-          # 确保脚本以0退出
-          true
-
-      - name: Store Ebooks to Repository
-        if: steps.convert.outputs.count != '0'
-        run: |
-          echo "存储电子书到仓库..."
-          
-          # 配置Git
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # 添加并提交电子书文件
-          git add $output/
-          if git diff-index --quiet HEAD --; then
-            echo "没有更改需要提交"
-          else
-            git commit -m "📚 Add generated ebooks - $(date +%Y-%m-%d)"
-            git push origin HEAD:${GITHUB_REF_NAME}
-            echo "更改已提交"
-          fi
-          
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Calibre-News-Delivery
-          path: ${{ env.output }}
-          retention-days: ${{ secrets.DAYS || 90 }}
+          # 使用内置Recipe测试
+          ebook-convert "BBC.recipe" test.epub
+      - name: Check Result
+        run: ls -la *.epub
